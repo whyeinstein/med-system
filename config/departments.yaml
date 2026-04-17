@@ -1,0 +1,13 @@
+# 科室清单. key = 内部标识, display = 前端/日志显示名.
+# 新增科室需: 1) 此处登记 2) config/prompts/ 下配 YAML 3) data/knowledge_base/ 下建目录
+
+departments:
+  - key: internal
+    display: 内科
+  - key: surgery
+    display: 外科
+  - key: pediatrics
+    display: 儿科
+  - key: general
+    display: 通用科  # 兜底科室, 路由 ambiguous 时加入
+general_key: general

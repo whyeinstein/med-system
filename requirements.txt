@@ -1,0 +1,29 @@
+# 多智能体医疗会诊系统 依赖清单
+# 环境: conda env `qwen` (不执行 pip install, 按需手动补齐)
+
+# Web 框架
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+
+# 数据契约
+pydantic>=2.6
+
+# 向量检索 & 嵌入
+faiss-cpu>=1.7.4
+sentence-transformers>=2.6
+# 若只使用 transformers 手动编码, 可去掉 sentence-transformers 并保留下行
+transformers>=4.40
+torch>=2.1
+
+# 通用
+numpy>=1.24
+pyyaml>=6.0
+requests>=2.31
+
+# 前端 (阶段 6 再用)
+streamlit>=1.32
+
+# 测试
+pytest>=8.0
+pytest-asyncio>=0.23

@@ -1,0 +1,44 @@
+# 全局运行参数. 可在不改代码的前提下调整.
+
+router:
+  tau: 0.3          # 置信度兜底阈值, max(conf) < tau 时触发 fallback
+  margin: 0.2       # 单科室判定边际, top1 - top2 > margin 即 single_clear
+  temperature: 1.0  # softmax 温度
+  top_k: 10         # 检索 top_k
+
+aggregator:
+  tau_consist: 0.75 # L1 一致性余弦最小值阈值
+  alpha: 0.3333     # L2 相关度权重
+  beta: 0.3333      # L2 置信度权重
+  gamma: 0.3334     # L2 完整度权重
+
+model:
+  rank_bins: [8, 16, 24, 32]
+  default_rank: 16  # mock 模式固定档位
+  max_new_tokens: 1024
+  mock: true
+  checkpoint_path: ""  # 阶段 7 填真实权重路径
+
+embedder:
+  # 支持在线名称或本地路径
+  model_name_or_path: "BAAI/bge-base-zh-v1.5"
+  device: "cpu"
+  batch_size: 16
+  normalize: true   # 归一化后内积 == 余弦相似度
+
+retriever:
+  index_path: "data/faiss_index"
+  chunk_size: 256   # 段落切分字符数
+  chunk_overlap: 32
+
+timeouts:
+  agent_seconds: 60
+
+storage:
+  sqlite_path: "data/consultation.db"
+
+safety:
+  low_risk_threshold: 2  # 低危命中超过该数视为累计高危
+
+logging:
+  level: "INFO"

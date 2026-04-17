@@ -1,0 +1,27 @@
+# 安全审查规则. 覆盖三类风险:
+#  1) 强断言: 直接拍板"确诊"/"无需就医"等极端表述
+#  2) 剂量/禁忌: 具体药物剂量或绝对化禁忌表述
+#  3) 超范围: 涉及需三级医院或专科确诊的侵入式操作结论
+
+high_risk_patterns:
+  - pattern: "(确诊|一定是|必定|无需就医|不用去医院)"
+    category: strong_assertion
+    replacement: "建议进一步检查以明确"
+
+  - pattern: "\\d+\\s*(mg|g|毫克|克|ml|毫升)(/(kg|天|次))?"
+    category: dose_specific
+    replacement: "具体剂量请遵医嘱"
+
+  - pattern: "(立即手术|保证治愈|百分之百|绝对安全|绝对无风险)"
+    category: overreach
+    replacement: "需由临床医师现场评估"
+
+low_risk_patterns:
+  - pattern: "(可能|疑似|考虑)"
+    category: soft_assertion
+
+disclaimer_template: |
+  【免责声明】本报告由 AI 辅助会诊系统生成, 仅供医学参考, 不构成诊断或处方依据. 实际诊疗请以线下执业医师评估为准.
+
+enhanced_disclaimer_template: |
+  【免责声明】本报告已经过安全审查与降级处理, 或存在多科室分歧. 强烈建议尽早前往正规医疗机构由执业医师面诊评估, 本系统输出不构成任何诊断或处方依据.

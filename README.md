@@ -1,0 +1,33 @@
+# 多智能体医疗会诊系统
+
+面向毕业论文第四章的工程实现。技术栈: Streamlit + FastAPI + SQLite + FAISS, 推理内核使用第三章微调的 MoE-LoRA + 困惑度驱动动态秩模型 (阶段 7 接入, 前期 mock)。
+
+## 快速启动 (阶段 0 + 1 已完成部分)
+
+```bash
+# 1. 激活环境 (已存在的 conda env)
+conda activate qwen
+
+# 2. 安装依赖 (首次)
+pip install -r requirements.txt
+
+# 3. 初始化 SQLite
+python scripts/init_db.py
+
+# 4. 构建 FAISS 知识库索引
+python scripts/build_kb_index.py --kb data/knowledge_base --out data/faiss_index
+
+# 5. 运行路由单测
+pytest tests/test_router.py -v
+```
+
+## 目录速览
+
+- `app/` 后端主体, 按论文 4.3 各小节拆分目录
+- `config/` YAML 配置 (阈值/提示词/安全规则)
+- `data/knowledge_base/<dept>/` 按科室分类的诊疗指南文本
+- `frontend/` Streamlit (阶段 6)
+- `scripts/` 运维脚本 (建库/建索引)
+- `tests/` 4.5 节测试评估脚本
+
+开发规范与阶段进度见 [开发规范与进度.md](开发规范与进度.md)。
