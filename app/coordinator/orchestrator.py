@@ -1,12 +1,23 @@
-"""会诊协调器 (论文 4.3.1). 阶段 4 线性流程; 阶段 5 重构为状态机驱动.
+"""会诊协调器 (论文 4.3.1). 阶段 5: 由 ``StateMachine`` 驱动六状态流程.
+
+状态流:
+
+    Idle → Routing → Consulting → Aggregating → Done
+                                              ↘ Error  (任意非终态在异常时迁入)
 
 **关键约束**:
   R2  数据库**只**由协调器读写, 通过本类持有的 `StorageBundle` 完成.
   R5  仲裁动作发起方**必须**是协调器: `_arbitrate` 显式以 `rank_hint=max(rank_bins)`
       调 `model.generate`, 把仲裁稿回传给 aggregator 的 L3 组装函数.
   R8  同步推理 ( `model.generate` / `router.route` ) 经 `asyncio.to_thread` 包装.
-  R10 routing / opinion / report 三段产出全部写入 `message` 表, 含完整 `inference_meta`,
-      为 4.5.6 案例分析与专家分化可视化提供唯一数据源.
+  R10 routing / opinion / report / 状态切换 全部写入 `message` 表, 含完整
+      `inference_meta`, 为 4.5.6 案例分析与专家分化可视化提供唯一数据源.
+
+阶段 5 新增:
+  - ``StateMachine``: 六状态有限自动机, 每次 ``transition`` 通过 listener 写
+    ``message`` 表 (role="state"), 异常统一兜底到 ``State.ERROR``.
+  - ``TaskQueue``:    三级超时容错 (重试 → 缺席标注 → 全局降级), 替换
+    ``asyncio.gather + wait_for`` 单层超时, 用于并行/混合模式的科室智能体调度.
 
 消融开关 (论文 4.5.5, 通过环境变量或显式构造参数控制):
   - use_router=False  → 跳过 router, 退化为"全科室并行"
@@ -17,11 +28,12 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from app.modes.hybrid import run_hybrid
+from app.coordinator.state_machine import IllegalTransition, State, StateMachine
+from app.coordinator.task_queue import QueueResult, TaskQueue
+from app.modes.hybrid import _needs_aux  # 沿用阶段 2 的 1/3 弱意见判据
 from app.modes.mode_selector import select_mode
-from app.modes.parallel import run_parallel
 from app.modes.serial import run_serial
 from app.schemas.case import CaseSummary
 from app.schemas.opinion import DepartmentOpinion
@@ -61,8 +73,10 @@ class ConsultationOrchestrator:
         use_hybrid: bool = True,
         use_safety: bool = True,
         default_mode: str = "parallel",
-        state_machine=None,
-        task_queue=None,
+        state_machine: Optional[StateMachine] = None,
+        task_queue: Optional[TaskQueue] = None,
+        max_retries: int = 1,
+        degrade_ratio: float = 0.5,
     ) -> None:
         self.router = router
         self.agents_map = dict(agents_map)
@@ -76,59 +90,95 @@ class ConsultationOrchestrator:
         self.use_hybrid = use_hybrid
         self.use_safety = use_safety
         self.default_mode = default_mode
-        # 阶段 5 接入
-        self.state_machine = state_machine
-        self.task_queue = task_queue
+        # 阶段 5: 默认情况下按构造参数自动构建状态机和任务队列, 调用方也可显式注入.
+        self.state_machine_factory = state_machine
+        self.task_queue: TaskQueue = task_queue or TaskQueue(
+            timeout_s=self.timeout_s,
+            max_retries=max_retries,
+            degrade_ratio=degrade_ratio,
+        )
 
     # ============================================================
-    # 主流程
+    # 主流程 (阶段 5: 状态机驱动)
     # ============================================================
 
     async def run(self, session_id: str, case: CaseSummary) -> FinalReport:
-        """阶段 4 线性流程: case → routing → mode → agents → aggregator → safety.
+        """状态机驱动的会诊主循环.
 
-        每一步的产出都通过 `MessageRepo` 落库 (R2 + R10), 为后续可视化与回溯提供数据.
+        每次状态切换通过 listener 写入 ``message`` 表 (role="state"), 任意阶段抛出
+        异常都会兜底进入 ``State.ERROR`` 并把异常信息一并落库, 满足 R10 全量可追溯.
         """
         round_ = 1
-        # 0. 病例落库 (R2: 仅协调器写)
+        sm = self.state_machine_factory or StateMachine()
+        sm.add_listener(self._make_state_listener(session_id, round_))
+
+        # 0. 病例落库 (R2: 仅协调器写). 失败直接抛出, 此时尚未进入状态机.
         self.storage.case.create(session_id, case)
         log_with(_LOG, "info", "consultation start", session_id=session_id, case_id=case.case_id)
 
-        # 1. 路由
-        routing = await self._do_routing(case)
-        self._save_routing(session_id, routing, round_)
+        try:
+            # Idle → Routing
+            sm.transition(State.ROUTING, {"case_id": case.case_id})
+            routing = await self._do_routing(case)
+            self._save_routing(session_id, routing, round_)
 
-        # 2. 模式选择 + 调度执行
-        mode = self._pick_mode(routing)
-        log_with(_LOG, "info", "mode picked", session_id=session_id, mode=mode, triage=routing.triage_tag)
-        with Timer() as t_mode:
-            opinions = await self._dispatch_mode(mode, case, routing)
-        log_with(
-            _LOG, "info", "agents done",
-            session_id=session_id, mode=mode, n_opinions=len(opinions),
-            elapsed_ms=round(t_mode.elapsed_ms, 2),
-        )
-        self._save_opinions(session_id, opinions, round_)
+            # Routing → Consulting
+            mode = self._pick_mode(routing)
+            sm.transition(State.CONSULTING, {"mode": mode, "triage_tag": routing.triage_tag})
+            log_with(_LOG, "info", "mode picked", session_id=session_id, mode=mode, triage=routing.triage_tag)
 
-        # 3. 三级综合 (含 L3 仲裁回调)
-        report, level = await self.aggregator.aggregate(
-            opinions, routing, coordinator_hook=self._arbitrate
-        )
+            with Timer() as t_mode:
+                opinions, dispatch_meta = await self._dispatch_mode(mode, case, routing)
+            log_with(
+                _LOG, "info", "agents done",
+                session_id=session_id, mode=mode, n_opinions=len(opinions),
+                elapsed_ms=round(t_mode.elapsed_ms, 2), **dispatch_meta,
+            )
+            self._save_opinions(session_id, opinions, round_)
 
-        # 4. 安全审查
-        if self.use_safety:
-            report = self.safety_agent.review(report)
-        else:
-            log_with(_LOG, "info", "safety skipped (ablation)", session_id=session_id)
+            # 全局降级且零有效意见 → 直接进入 Error 状态, 不再尝试聚合
+            if dispatch_meta.get("degraded") and not opinions:
+                sm.fail(
+                    "global_degrade_no_opinions",
+                    absent=dispatch_meta.get("absent", []),
+                    mode=mode,
+                )
+                self._save_error(session_id, sm.history[-1][2], round_)
+                raise RuntimeError("global degrade triggered with zero opinions")
 
-        # 5. 报告落库
-        self._save_report(session_id, report, level, mode, round_)
+            # Consulting → Aggregating
+            sm.transition(State.AGGREGATING, {"n_opinions": len(opinions)})
+            report, level = await self.aggregator.aggregate(
+                opinions, routing, coordinator_hook=self._arbitrate
+            )
 
-        log_with(
-            _LOG, "info", "consultation done",
-            session_id=session_id, agg_level=level, safety_action=report.safety_action,
-        )
-        return report
+            if self.use_safety:
+                report = self.safety_agent.review(report)
+            else:
+                log_with(_LOG, "info", "safety skipped (ablation)", session_id=session_id)
+
+            self._save_report(session_id, report, level, mode, round_)
+
+            # Aggregating → Done
+            sm.transition(State.DONE, {
+                "aggregation_level": level,
+                "safety_action": report.safety_action,
+            })
+            log_with(
+                _LOG, "info", "consultation done",
+                session_id=session_id, agg_level=level, safety_action=report.safety_action,
+            )
+            return report
+
+        except IllegalTransition:
+            # 状态机本身的非法迁移属于编码 bug, 直接上抛
+            raise
+        except Exception as e:  # noqa: BLE001
+            # 已经在 Error 终态时不重复迁移
+            if not sm.is_terminal:
+                sm.fail("exception", err_type=type(e).__name__, err=str(e))
+                self._save_error(session_id, sm.history[-1][2], round_)
+            raise
 
     # ============================================================
     # 路由
@@ -163,29 +213,67 @@ class ConsultationOrchestrator:
 
     async def _dispatch_mode(
         self, mode: str, case: CaseSummary, routing: RoutingResult
-    ) -> List[DepartmentOpinion]:
+    ) -> Tuple[List[DepartmentOpinion], Dict[str, Any]]:
+        """根据模式调度科室智能体, 返回 (有效意见列表, 调度元信息).
+
+        阶段 5: parallel / hybrid 走 ``TaskQueue`` 三级容错; serial 仍由
+        ``run_serial`` 顺序执行 (其本身自带按科室超时跳过逻辑).
+        """
         candidate_keys = [c.dept for c in routing.candidates if c.confidence > 0]
-        all_agents = [self.agents_map[k] for k in candidate_keys if k in self.agents_map]
+        all_pairs: List[Tuple[str, Any]] = [
+            (k, self.agents_map[k]) for k in candidate_keys if k in self.agents_map
+        ]
 
         if mode == "serial":
-            # single_clear 时仅以 top1 走串行 (兼顾"快路径")
             top_key = routing.candidates[0].dept if routing.candidates else None
             if top_key and top_key in self.agents_map:
                 chosen = [self.agents_map[top_key]]
             else:
-                chosen = all_agents
-            return await run_serial(chosen, case, timeout_s=self.timeout_s)
+                chosen = [a for _, a in all_pairs]
+            opinions = await run_serial(chosen, case, timeout_s=self.timeout_s)
+            return opinions, {"absent": [], "degraded": False, "scheduler": "serial"}
 
         if mode == "hybrid":
             core_min = float(self.mode_thresholds.get("hybrid_core_min_conf", 0.2))
             core_keys = [c.dept for c in routing.candidates if c.confidence >= core_min]
             aux_keys = [k for k in candidate_keys if k not in core_keys]
-            core = [self.agents_map[k] for k in core_keys if k in self.agents_map]
-            aux = [self.agents_map[k] for k in aux_keys if k in self.agents_map]
-            return await run_hybrid(core, aux, case, timeout_s=self.timeout_s)
+            core_pairs = [(k, self.agents_map[k]) for k in core_keys if k in self.agents_map]
+            aux_pairs = [(k, self.agents_map[k]) for k in aux_keys if k in self.agents_map]
+
+            core_res = await self._run_via_queue(core_pairs, case)
+            opinions = list(core_res.results)
+            absent = list(core_res.absent)
+            degraded = core_res.degraded
+            if aux_pairs and _needs_aux(opinions):
+                aux_res = await self._run_via_queue(aux_pairs, case)
+                opinions += aux_res.results
+                absent += aux_res.absent
+                degraded = degraded or aux_res.degraded
+            return opinions, {
+                "absent": absent,
+                "degraded": degraded,
+                "scheduler": "hybrid",
+            }
 
         # parallel (含 ambiguous)
-        return await run_parallel(all_agents, case, timeout_s=self.timeout_s)
+        res = await self._run_via_queue(all_pairs, case)
+        return list(res.results), {
+            "absent": list(res.absent),
+            "degraded": res.degraded,
+            "scheduler": "parallel",
+        }
+
+    async def _run_via_queue(
+        self, pairs: List[Tuple[str, Any]], case: CaseSummary
+    ) -> QueueResult:
+        """把一组 (dept, agent) 交给 ``TaskQueue`` 并发执行 (R8 全异步)."""
+        if not pairs:
+            return QueueResult()
+        tasks = [
+            (dept, (lambda a=agent: a.analyze(case)))
+            for dept, agent in pairs
+        ]
+        return await self.task_queue.run(tasks)
 
     # ============================================================
     # 仲裁回调 (R5 核心亮点)
@@ -293,5 +381,37 @@ class ConsultationOrchestrator:
                 "mode": mode,
                 "n_opinions": len(report.dept_opinions),
             },
+            round_=round_,
+        )
+
+    # ============================================================
+    # 阶段 5: 状态机 listener + 错误落库
+    # ============================================================
+
+    def _make_state_listener(self, session_id: str, round_: int):
+        """返回一个把状态切换写入 message 表 (role="state") 的回调.
+
+        listener 内部对落库异常静默, 由 ``StateMachine.transition`` 负责吞掉; 这是
+        因为状态机切换不能因 IO 抖动失败而中断主流程.
+        """
+        repo = self.storage.message
+
+        def _listener(prev: State, target: State, meta: Dict[str, Any]) -> None:
+            repo.add(
+                session_id,
+                role="state",
+                payload={"from": prev.value, "to": target.value, **meta},
+                inference_meta={"transition": f"{prev.value}->{target.value}"},
+                round_=round_,
+            )
+        return _listener
+
+    def _save_error(self, sid: str, err_meta: Dict[str, Any], round_: int) -> None:
+        """显式落一条 role="error" 的 message, 便于事后定位失败原因."""
+        self.storage.message.add(
+            sid,
+            role="error",
+            payload=dict(err_meta),
+            inference_meta={"final_state": State.ERROR.value},
             round_=round_,
         )
