@@ -211,6 +211,11 @@ def create_app(deps: Optional[Dict[str, Any]] = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="session not found")
         return await app.state.deps["orchestrator"].run(req.session_id, req.case)
 
+    @app.get("/api/v1/sessions")
+    async def list_sessions(limit: int = 50) -> List[Dict[str, Any]]:
+        # 阶段 6 前端历史记录页使用. 仅读不写, 与 list_messages 同一模式 (R2).
+        return app.state.deps["storage"].session.list(limit=limit)
+
     @app.get("/api/v1/session/{sid}")
     async def list_messages(sid: str) -> List[Dict[str, Any]]:
         sess = app.state.deps["storage"].session.get(sid)

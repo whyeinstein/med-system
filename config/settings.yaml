@@ -20,8 +20,8 @@ model:
   checkpoint_path: ""  # 阶段 7 填真实权重路径
 
 embedder:
-  # 支持在线名称或本地路径
-  model_name_or_path: "BAAI/bge-base-zh-v1.5"
+  # 支持在线名称或本地路径; 无外网时填本地缓存目录
+  model_name_or_path: "/root/.cache/huggingface/hub/models--BAAI--bge-base-zh-v1.5/snapshots/f03589ceff5aac7111bd60cfc7d497ca17ecac65"
   device: "cpu"
   batch_size: 16
   normalize: true   # 归一化后内积 == 余弦相似度

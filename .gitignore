@@ -11,6 +11,8 @@ __pycache__/
 data/faiss_index/
 data/consultation.db
 data/consultation.db-journal
+data/consultation.db-shm
+data/consultation.db-wal
 logs/
 
 # 编辑器
