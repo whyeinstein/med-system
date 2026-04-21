@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import random
+import threading
 import time
 from typing import Optional, Tuple
 
@@ -27,12 +28,14 @@ class ModelEngine:
 
     def __init__(
         self,
-        checkpoint_path: str = "",
+        base_model_path: str = "",
+        lora_adapter_path: str = "",
         rank_bins: Tuple[int, ...] = (8, 16, 24, 32),
         default_rank: int = 16,
         mock: bool = True,
+        # 兼容旧调用方：checkpoint_path 已拆分为 base_model_path + lora_adapter_path
+        checkpoint_path: str = "",
     ) -> None:
-        self.checkpoint_path = checkpoint_path
         self.rank_bins = tuple(rank_bins)
         self.default_rank = default_rank
         self.mock = mock
@@ -40,10 +43,21 @@ class ModelEngine:
             # 阶段 7: 通过 moe_lora_loader 加载真实模型
             from app.model.moe_lora_loader import load_moe_lora_model
 
-            self._model, self._tokenizer = load_moe_lora_model(checkpoint_path)
+            self._model, self._tokenizer = load_moe_lora_model(
+                base_model_path=base_model_path,
+                lora_adapter_path=lora_adapter_path,
+            )
+            # GPU 推理必须序列化：_set_context/_real_generate/_clear_context 是共享状态，
+            # asyncio.to_thread 多线程并发时会互相覆盖 _rank，需要 threading.Lock 保护。
+            self._gpu_lock = threading.Lock()
+            log_with(
+                _LOG, "info", "ModelEngine initialized in REAL mode",
+                base=base_model_path, lora=lora_adapter_path,
+            )
         else:
             self._model = None
             self._tokenizer = None
+            self._gpu_lock = None
             log_with(_LOG, "info", "ModelEngine initialized in MOCK mode")
 
     # ---------------- public ----------------
@@ -65,7 +79,9 @@ class ModelEngine:
             text = _MOCK_TEMPLATE.format(dept_hint=dept_hint)
             router_weights = self._mock_router_weights()
         else:
-            text, router_weights = self._real_generate(prompt, rank, max_new_tokens)
+            # 序列化 GPU 访问：防止并行 agent 互相覆盖 _rank 上下文
+            with self._gpu_lock:
+                text, router_weights = self._real_generate(prompt, rank, max_new_tokens)
 
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         meta = {
@@ -79,10 +95,23 @@ class ModelEngine:
     # ---------------- internal ----------------
 
     def _estimate_rank(self, prompt: str) -> int:
-        """mock 模式返回默认档位; 真实模式按论文: 基座前向 → token 级 CE 均值 → 归一化 → 映射档位."""
+        """mock 模式返回默认档位; 真实模式: 基座前向 → token 级 CE 均值 → ppl_quantiles 映射档位."""
         if self.mock:
             return self.default_rank
-        raise NotImplementedError("Phase 7: 困惑度驱动动态秩估计")
+        import torch
+
+        wrapper = self._model
+        tokenizer = self._tokenizer
+        device = next(wrapper.parameters()).device
+        inputs = tokenizer(
+            prompt, return_tensors="pt", truncation=True, max_length=512
+        ).to(device)
+        rank_tensor = wrapper._rank_from_perplexity(
+            input_ids=inputs["input_ids"],
+            attention_mask=inputs["attention_mask"],
+            device=device,
+        )
+        return int(rank_tensor[0].item())
 
     @staticmethod
     def _guess_dept_from_prompt(prompt: str) -> str:
@@ -107,4 +136,63 @@ class ModelEngine:
     def _real_generate(
         self, prompt: str, rank: int, max_new_tokens: int
     ) -> Tuple[str, dict]:
-        raise NotImplementedError("Phase 7: 真实 MoE-LoRA 推理 + 秩注入")
+        """真实 MoE-LoRA 推理：注入秩上下文 → 生成 → 解码 → 提取全局路由权重。"""
+        import torch
+
+        wrapper = self._model
+        tokenizer = self._tokenizer
+        device = next(wrapper.parameters()).device
+
+        inputs = tokenizer(
+            prompt, return_tensors="pt", truncation=True, max_length=2048
+        ).to(device)
+        input_ids = inputs["input_ids"]
+        attention_mask = inputs["attention_mask"]
+
+        # 注入秩上下文（R5：仲裁时调用方已传入 rank_hint=max，此处统一执行）
+        rank_tensor = torch.tensor([rank], device=device, dtype=torch.long)
+        wrapper._set_context(None, rank_tensor)
+
+        try:
+            with torch.no_grad():
+                gen_ids = wrapper.base_model.generate(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=True,
+                    temperature=0.1,
+                    top_p=0.9,
+                    repetition_penalty=1.1,
+                    eos_token_id=tokenizer.eos_token_id,
+                    pad_token_id=(
+                        tokenizer.pad_token_id
+                        if tokenizer.pad_token_id is not None
+                        else tokenizer.eos_token_id
+                    ),
+                )
+        finally:
+            wrapper._clear_context()
+
+        # 仅解码新生成的 token
+        prompt_len = input_ids.shape[1]
+        new_ids = gen_ids[0][prompt_len:]
+        text = tokenizer.decode(new_ids, skip_special_tokens=True).strip()
+
+        # 全局路由权重（可视化用），用全局 DeptRouter 预测科室分布
+        router_weights = self._extract_router_weights(input_ids, attention_mask, wrapper)
+
+        return text, router_weights
+
+    def _extract_router_weights(self, input_ids, attention_mask, wrapper) -> dict:
+        """调用全局 DeptRouter 获取科室路由概率，用于前端可视化。"""
+        import torch
+
+        try:
+            with torch.no_grad():
+                result = wrapper.route_topk(
+                    input_ids, attention_mask, k=wrapper.num_experts
+                )
+            return {dept: round(prob, 4) for dept, prob, _ in result["topk"]}
+        except Exception as exc:  # pragma: no cover
+            _LOG.warning("route_topk failed: %s", exc)
+            return {}

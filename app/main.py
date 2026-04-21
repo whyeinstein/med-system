@@ -100,7 +100,8 @@ def build_default_deps() -> Dict[str, Any]:
     # ---- 模型 ----
     mcfg = settings["model"]
     model = ModelEngine(
-        checkpoint_path=mcfg.get("checkpoint_path", ""),
+        base_model_path=mcfg.get("base_model_path", ""),
+        lora_adapter_path=mcfg.get("lora_adapter_path", ""),
         rank_bins=tuple(mcfg.get("rank_bins", (8, 16, 24, 32))),
         default_rank=int(mcfg.get("default_rank", 16)),
         mock=bool(mcfg.get("mock", True)),

@@ -16,8 +16,11 @@ model:
   rank_bins: [8, 16, 24, 32]
   default_rank: 16  # mock 模式固定档位
   max_new_tokens: 1024
-  mock: true
-  checkpoint_path: ""  # 阶段 7 填真实权重路径
+  # mock: true
+  mock: false
+  # 阶段 7: 切换真实模式时将 mock 改为 false，并填入以下两个路径
+  base_model_path: "/root/autodl-tmp/develop/modle/Qwen2.5-3B-Instruct"
+  lora_adapter_path: "/root/autodl-tmp/moelora-med/outputs/qwen25_3b_moelora_qv/best"
 
 embedder:
   # 支持在线名称或本地路径; 无外网时填本地缓存目录
@@ -32,7 +35,7 @@ retriever:
   chunk_overlap: 32
 
 timeouts:
-  agent_seconds: 60
+  agent_seconds: 300  # 真实模式: 3B 模型单次推理 ~18s, 3 个 agent 序列化后最长 ~60s, 预留 5x 余量
 
 storage:
   sqlite_path: "data/consultation.db"
