@@ -117,6 +117,24 @@ _THEME_CSS = """
     margin-bottom: 16px;
     box-shadow: 0 1px 0 rgba(31,77,70,.04);
   }
+  /* 同一行中需要等高的卡片: 主页顶部三列 */
+  .md-card-eq {
+    min-height: 220px;
+    height: 100%;
+    display: flex; flex-direction: column;
+    margin-bottom: 0;
+  }
+  /* 使 columns 内部的 markdown 容器 也填满高度, 以开启等高 */
+  div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+    display: flex;
+  }
+  div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] {
+    width: 100%;
+  }
+  div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] .stMarkdown,
+  div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] .stMarkdown > div {
+    height: 100%;
+  }
   .md-card h3 {
     margin: 0 0 14px; font-family: var(--md-serif); font-weight: 600;
     font-size: 1.05rem; color: var(--md-text); letter-spacing: -.005em;
@@ -287,6 +305,14 @@ _THEME_CSS = """
     border-left: 2px solid var(--md-accent);
   }
   [data-testid="stSidebarNav"] span { color: inherit !important; }
+  /* 把入口页 app -> 总览 (Streamlit 多页导航默认显示文件名) */
+  [data-testid="stSidebarNav"] ul li:first-child a span { display: none !important; }
+  [data-testid="stSidebarNav"] ul li:first-child a::after {
+    content: "总览";
+    font-family: var(--md-sans);
+    font-weight: 500;
+    color: inherit;
+  }
   /* 侧边栏内的控件外观对齐 */
   [data-testid="stSidebar"] .stTextInput input,
   [data-testid="stSidebar"] .stTextArea textarea,
@@ -330,7 +356,6 @@ def setup_page(title: str, icon: str = "🩺") -> None:
             </div>
             <div class="meta">
                 <strong>{title}</strong>
-                Editorial Console · v0.6
             </div>
         </div>
         """,
