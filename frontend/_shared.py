@@ -200,6 +200,116 @@ _THEME_CSS = """
 
   /* ===== 隐藏 Streamlit 自带的 'Made with Streamlit' ===== */
   footer { visibility: hidden; }
+
+  /* ===== 隐藏顶部右侧 Deploy 按钮 / 三点菜单, 但保留 sidebar 折叠按钮 ===== */
+  [data-testid="stDecoration"],
+  [data-testid="stStatusWidget"],
+  [data-testid="stAppDeployButton"],
+  [data-testid="stToolbarActions"],
+  header [data-testid="stMainMenu"],
+  #MainMenu { display: none !important; }
+  /* 保留顶部 header 占位 (内含 sidebar 展开按钮), 仅做透明化 */
+  header[data-testid="stHeader"] {
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  /* 折叠后用于重新展开的浮动按钮: 务必保留 */
+  [data-testid="stSidebarCollapsedControl"],
+  [data-testid="collapsedControl"] {
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+
+  /* ===== 侧边栏: 与右侧主内容统一的 editorial 浅色主题 ===== */
+  [data-testid="stSidebar"] {
+    background:
+      linear-gradient(180deg, #fbf9f3 0%, var(--md-bg) 100%) !important;
+    border-right: 1px solid var(--md-line-strong) !important;
+  }
+  [data-testid="stSidebar"] > div:first-child {
+    background: transparent !important;
+  }
+  /* 侧边栏内文字 / 标题 / 链接 (避免覆盖 Material Symbols 图标字体) */
+  [data-testid="stSidebar"] p,
+  [data-testid="stSidebar"] span,
+  [data-testid="stSidebar"] div,
+  [data-testid="stSidebar"] label,
+  [data-testid="stSidebar"] a,
+  [data-testid="stSidebar"] li {
+    color: var(--md-text);
+    font-family: var(--md-sans);
+  }
+  [data-testid="stSidebar"] h1,
+  [data-testid="stSidebar"] h2,
+  [data-testid="stSidebar"] h3 {
+    font-family: var(--md-serif);
+    color: var(--md-text);
+    letter-spacing: -.005em;
+  }
+  /* 关键: 不要覆盖图标字体, 否则 'keyboard_double_arrow_left' 等会显示成文字 */
+  [data-testid="stSidebar"] [class*="icon"],
+  [data-testid="stSidebar"] [data-testid*="Icon"],
+  [data-testid="stSidebar"] svg,
+  [data-testid="stSidebarCollapseButton"] *,
+  [data-testid="stSidebarCollapsedControl"] *,
+  [data-testid="collapsedControl"] *,
+  .material-symbols-rounded,
+  .material-symbols-outlined,
+  .material-icons,
+  span[translate="no"] {
+    font-family: 'Material Symbols Rounded','Material Symbols Outlined','Material Icons' !important;
+  }
+  /* 多页导航链接 */
+  [data-testid="stSidebarNav"] {
+    padding-top: 8px;
+    border-bottom: 1px solid var(--md-line);
+    margin-bottom: 12px;
+  }
+  [data-testid="stSidebarNav"] ul { padding: 0 8px; }
+  [data-testid="stSidebarNav"] a {
+    border-radius: 4px;
+    margin: 2px 0;
+    padding: 6px 12px !important;
+    color: var(--md-text-dim) !important;
+    font-weight: 500;
+    letter-spacing: .02em;
+    transition: background .15s ease, color .15s ease;
+  }
+  [data-testid="stSidebarNav"] a:hover {
+    background: rgba(31,77,70,.06) !important;
+    color: var(--md-accent) !important;
+  }
+  [data-testid="stSidebarNav"] a[aria-current="page"],
+  [data-testid="stSidebarNav"] a.active {
+    background: rgba(31,77,70,.10) !important;
+    color: var(--md-accent) !important;
+    border-left: 2px solid var(--md-accent);
+  }
+  [data-testid="stSidebarNav"] span { color: inherit !important; }
+  /* 侧边栏内的控件外观对齐 */
+  [data-testid="stSidebar"] .stTextInput input,
+  [data-testid="stSidebar"] .stTextArea textarea,
+  [data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] > div {
+    background: var(--md-panel) !important;
+    border: 1px solid var(--md-line) !important;
+    color: var(--md-text) !important;
+  }
+  [data-testid="stSidebar"] hr { border-color: var(--md-line) !important; }
+  /* 折叠/展开按钮: 保持可见, 仅微调配色 */
+  [data-testid="stSidebarCollapseButton"],
+  [data-testid="stSidebarCollapsedControl"],
+  [data-testid="collapsedControl"],
+  [data-testid="stBaseButton-headerNoPadding"] {
+    color: var(--md-accent) !important;
+    background: transparent !important;
+  }
+  [data-testid="stSidebarCollapseButton"] svg,
+  [data-testid="stSidebarCollapsedControl"] svg,
+  [data-testid="collapsedControl"] svg {
+    fill: var(--md-accent) !important;
+    color: var(--md-accent) !important;
+  }
 </style>
 """
 
