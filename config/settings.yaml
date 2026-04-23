@@ -5,6 +5,8 @@ router:
   margin: 0.2       # 单科室判定边际, top1 - top2 > margin 即 single_clear
   temperature: 1.0  # softmax 温度
   top_k: 10         # 检索 top_k
+  top_k_keep: 4     # 候选科室数量上限 (论文 4.3.2: Top-K 截断, 仅保留高置信子集)
+  tau_keep: 0.10    # 候选保留最低置信度, conf < tau_keep 的科室直接剔除
 
 aggregator:
   tau_consist: 0.75 # L1 一致性余弦最小值阈值

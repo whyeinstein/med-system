@@ -533,7 +533,10 @@ def pretty_json(payload: Any) -> str:
 
 # ---------------- 综合报告 / 分诊页 共享渲染 ----------------
 
-_DEPT_LABEL_CN = {"internal": "内科", "surgery": "外科", "pediatrics": "儿科", "general": "全科"}
+_DEPT_LABEL_CN = {
+    "internal": "内科", "surgery": "外科", "pediatrics": "儿科", "general": "全科",
+    "gynecology": "妇产科", "oncology": "肿瘤科", "dermatology": "皮肤科", "andrology": "男科",
+}
 _TRIAGE_LABEL = {
     "single_clear": ("单一明确", "ok"),
     "multi_cross":  ("多科室交叉", "info"),

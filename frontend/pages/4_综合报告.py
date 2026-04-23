@@ -45,7 +45,10 @@ if not report:
 
 routing = None  # 过程信息已移至「分诊详情」页, 本页仅作最终结果页
 
-DEPT_LABEL = {"internal": "内科", "surgery": "外科", "pediatrics": "儿科", "general": "全科"}
+DEPT_LABEL = {
+    "internal": "内科", "surgery": "外科", "pediatrics": "儿科", "general": "全科",
+    "gynecology": "妇产科", "oncology": "肿瘤科", "dermatology": "皮肤科", "andrology": "男科",
+}
 MERGE_LABEL = {1: "一致融合", 2: "加权融合", 3: "仲裁裁定"}
 
 level = report.get("aggregation_level", 0)

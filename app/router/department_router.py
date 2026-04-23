@@ -1,8 +1,10 @@
 """路由调度器. 严格遵循论文 4.3.2:
 1) 语义检索 top_k
 2) 按 dept 分组取相似度 **最大值** (非均值, 避免噪声片段累积)
-3) softmax 归一化为 confidence
-4) triage_tag:
+3) softmax 归一化为 confidence (在全部已注册科室上做归一)
+4) **候选筛选**: Top-K 截断 + tau_keep 阈值过滤, 仅保留高置信子集
+   (避免把近 0 的科室也算成候选, 否则 multi_cross 会成为常态, 路由形同虚设)
+5) triage_tag (基于筛选后的候选集判断):
    - top1 - top2 > margin → single_clear
    - top1 < tau          → ambiguous (fallback)
    - 其他                → multi_cross
@@ -27,6 +29,8 @@ class DepartmentRouter:
         margin: float = 0.2,
         temperature: float = 1.0,
         top_k: int = 10,
+        top_k_keep: int = 3,
+        tau_keep: float = 0.10,
         general_dept: str = "general",
     ) -> None:
         if not departments:
@@ -37,6 +41,8 @@ class DepartmentRouter:
         self.margin = margin
         self.temperature = max(temperature, 1e-6)
         self.top_k = top_k
+        self.top_k_keep = max(1, int(top_k_keep))
+        self.tau_keep = float(tau_keep)
         self.general_dept = general_dept
 
     def route(self, case: CaseSummary) -> RoutingResult:
@@ -46,6 +52,9 @@ class DepartmentRouter:
         raw_scores = self._group_max(hits)
         candidates = self._softmax(raw_scores)
         candidates.sort(key=lambda c: c.confidence, reverse=True)
+
+        # 候选筛选: Top-K + 阈值 (至少保留 1 个, 否则 fallback 兜底)
+        candidates = self._filter_candidates(candidates)
 
         triage_tag = self._classify(candidates)
 
@@ -78,6 +87,16 @@ class DepartmentRouter:
         exps = [math.exp(v - m) for v in vals]
         s = sum(exps) or 1.0
         return [DeptCandidate(dept=d, confidence=e / s) for d, e in zip(depts, exps)]
+
+    def _filter_candidates(self, candidates: List[DeptCandidate]) -> List[DeptCandidate]:
+        """Top-K 截断 + tau_keep 阈值过滤. 至少保留 1 个候选 (留给 ambiguous 判定/fallback)."""
+        if not candidates:
+            return candidates
+        topk = candidates[: self.top_k_keep]
+        kept = [c for c in topk if c.confidence >= self.tau_keep]
+        if not kept:
+            kept = [topk[0]]
+        return kept
 
     def _classify(self, candidates: List[DeptCandidate]) -> str:
         if not candidates:

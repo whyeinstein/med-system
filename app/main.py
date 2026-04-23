@@ -130,6 +130,8 @@ def build_default_deps() -> Dict[str, Any]:
         margin=float(rcfg.get("margin", 0.2)),
         temperature=float(rcfg.get("temperature", 1.0)),
         top_k=int(rcfg.get("top_k", 10)),
+        top_k_keep=int(rcfg.get("top_k_keep", 3)),
+        tau_keep=float(rcfg.get("tau_keep", 0.10)),
         general_dept=departments.get("general_key", "general"),
     )
     agents_map = {

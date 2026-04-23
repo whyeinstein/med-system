@@ -42,7 +42,10 @@ TRIAGE_LABEL = {
     "multi_cross":  ("多科室交叉", "info"),
     "ambiguous":    ("情况复杂", "warn"),
 }
-DEPT_LABEL = {"internal": "内科", "surgery": "外科", "pediatrics": "儿科", "general": "全科"}
+DEPT_LABEL = {
+    "internal": "内科", "surgery": "外科", "pediatrics": "儿科", "general": "全科",
+    "gynecology": "妇产科", "oncology": "肿瘤科", "dermatology": "皮肤科", "andrology": "男科",
+}
 MODE_LABEL = {"parallel": "并行会诊", "serial": "串行会诊", "hybrid": "混合会诊"}
 
 triage = routing.get("triage_tag", "—")
@@ -59,14 +62,11 @@ if report_msg:
 mode_label = MODE_LABEL.get(mode_code, "尚未确定")
 mode_cls = "ok" if mode_code else "info"
 
-# 兜底状态: 触发时高亮 warn, 未触发只做轻量徽标
-if fallback:
-    fallback_badge = '<span class="md-tag warn" style="margin-left:8px;">已触发兜底</span>'
-else:
-    fallback_badge = (
-        '<span style="margin-left:8px; color: var(--md-text-faint); font-size:.78rem;">'
-        '兜底未触发</span>'
-    )
+# 兜底状态: 仅在触发时显示徽标, 未触发不占位
+fallback_badge = (
+    '<span class="md-tag warn" style="margin-left:8px;">已触发兜底</span>'
+    if fallback else ""
+)
 
 # ---------------- 分诊概览 ----------------
 

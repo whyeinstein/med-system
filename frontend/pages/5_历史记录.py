@@ -18,7 +18,10 @@ except BackendError as e:
     st.error(str(e))
     st.stop()
 
-DEPT_LABEL = {"internal": "内科", "surgery": "外科", "pediatrics": "儿科", "general": "全科"}
+DEPT_LABEL = {
+    "internal": "内科", "surgery": "外科", "pediatrics": "儿科", "general": "全科",
+    "gynecology": "妇产科", "oncology": "肿瘤科", "dermatology": "皮肤科", "andrology": "男科",
+}
 LEVEL_LABEL = {1: "L1 一致", 2: "L2 加权", 3: "L3 仲裁"}
 ACTION_LABEL = {"pass": "通过", "arbitrated": "仲裁", "degraded": "降级"}
 ACTION_TAG = {"pass": "ok", "arbitrated": "info", "degraded": "warn"}
@@ -126,7 +129,7 @@ for s in sessions:
         """,
         unsafe_allow_html=True,
     )
-    btn_cols = st.columns([1.2, 1, 16])
+    btn_cols = st.columns([2, 2, 14])
     with btn_cols[0]:
         if st.button("载入会诊", key=f"load_{sid}"):
             set_session_id(sid)
