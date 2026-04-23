@@ -224,6 +224,30 @@ def create_app(deps: Optional[Dict[str, Any]] = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="session not found")
         return app.state.deps["storage"].message.list(sid)
 
+    @app.get("/api/v1/session/{sid}/case")
+    async def get_session_case(sid: str) -> Dict[str, Any]:
+        sess = app.state.deps["storage"].session.get(sid)
+        if not sess:
+            raise HTTPException(status_code=404, detail="session not found")
+        case = app.state.deps["storage"].case.get_by_session(sid)
+        if not case:
+            raise HTTPException(status_code=404, detail="case not found")
+        return {
+            "case_id": case.case_id,
+            "chief_complaint": case.chief_complaint,
+            "symptoms": case.symptoms,
+            "medical_history": case.medical_history or "",
+            "exam_results": case.exam_results or "",
+        }
+
+    @app.delete("/api/v1/session/{sid}")
+    async def delete_session(sid: str) -> Dict[str, Any]:
+        sess = app.state.deps["storage"].session.get(sid)
+        if not sess:
+            raise HTTPException(status_code=404, detail="session not found")
+        app.state.deps["storage"].session.delete(sid)
+        return {"deleted": sid}
+
     @app.get("/api/v1/session/{sid}/trace/{round_}", response_model=List[TraceItem])
     async def trace(sid: str, round_: int) -> List[TraceItem]:
         sess = app.state.deps["storage"].session.get(sid)

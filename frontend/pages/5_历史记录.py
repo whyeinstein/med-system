@@ -5,7 +5,7 @@ from typing import Dict
 
 import streamlit as st
 
-from frontend._shared import get_client, latest_report, set_session_id, setup_page
+from frontend._shared import get_client, latest_report, set_case, set_report, set_session_id, setup_page
 from frontend.api_client import BackendError
 
 setup_page("历史记录", icon="🗂️")
@@ -58,6 +58,10 @@ if not sessions:
     st.info("尚无任何会诊记录, 请先在 [病例录入] 页提交一次会诊.")
     st.stop()
 
+# 删除确认 state
+if "confirm_delete" not in st.session_state:
+    st.session_state["confirm_delete"] = None
+
 for s in sessions:
     sid = s["id"]
     created = s.get("created_at", "")
@@ -91,8 +95,38 @@ for s in sessions:
         """,
         unsafe_allow_html=True,
     )
-    cols = st.columns([1, 6])
-    with cols[0]:
-        if st.button("载入会话", key=f"load_{sid}"):
+    btn_cols = st.columns([1.2, 1, 16])
+    with btn_cols[0]:
+        if st.button("载入会诊", key=f"load_{sid}"):
             set_session_id(sid)
-            st.success("已切换到该会话, 可前往 [综合报告] / [各科室意见] 查看.")
+            try:
+                case_data = client.get_case(sid)
+                set_case(case_data)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                msgs = client.list_messages(sid)
+                from frontend._shared import latest_report  # noqa: PLC0415
+                rep_msg = latest_report(msgs)
+                if rep_msg:
+                    set_report(rep_msg["payload"])
+            except Exception:  # noqa: BLE001
+                pass
+            st.success("已切换到该会话, 可前往「综合报告」查看综合结论与各科室意见.")
+    with btn_cols[1]:
+        if st.session_state["confirm_delete"] == sid:
+            if st.button("确认删除", key=f"del_confirm_{sid}"):
+                try:
+                    client.delete_session(sid)
+                    _enrich.clear()
+                except BackendError as e:
+                    st.error(str(e))
+                st.session_state["confirm_delete"] = None
+                st.rerun()
+        else:
+            if st.button("删除记录", key=f"del_{sid}"):
+                st.session_state["confirm_delete"] = sid
+                st.rerun()
+
+    st.write("")
+

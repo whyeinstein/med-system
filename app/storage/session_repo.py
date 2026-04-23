@@ -43,3 +43,9 @@ class SessionRepo:
             {"id": r["id"], "created_at": r["created_at"], "meta": json.loads(r["meta"] or "{}")}
             for r in rows
         ]
+
+    def delete(self, sid: str) -> None:
+        with write_lock():
+            self._conn.execute("DELETE FROM message WHERE session_id = ?", (sid,))
+            self._conn.execute('DELETE FROM "case" WHERE session_id = ?', (sid,))
+            self._conn.execute("DELETE FROM session WHERE id = ?", (sid,))

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
@@ -177,6 +178,18 @@ _THEME_CSS = """
   .md-bar > span { display: block; height: 100%;
                    background: linear-gradient(90deg, var(--md-accent), var(--md-accent-2)); }
 
+  /* ===== st.container(border=True, key="dept_opinions_card") 白底卡片 ===== */
+  .st-key-dept_opinions_card,
+  div[class*="st-key-dept_opinions_card"] {
+    background: #ffffff !important;
+    border: 1px solid var(--md-line) !important;
+    border-radius: 2px !important;
+  }
+  .st-key-dept_opinions_card > div,
+  div[class*="st-key-dept_opinions_card"] > div {
+    background: transparent !important;
+  }
+
   /* ===== 五字段意见块 ===== */
   .md-opinion h4 {
     margin: 14px 0 4px; font-family: var(--md-serif); font-weight: 600;
@@ -342,7 +355,7 @@ _THEME_CSS = """
 
 def setup_page(title: str, icon: str = "🩺") -> None:
     """统一页面初始化: 设置页签、注入主题、显示品牌条."""
-    st.set_page_config(page_title=f"{title} · 多智能体医疗会诊", page_icon=icon, layout="wide")
+    st.set_page_config(page_title=f"{title} · 多科室智能会诊系统", page_icon=icon, layout="wide")
     st.markdown(_THEME_CSS, unsafe_allow_html=True)
     st.markdown(
         f"""
@@ -350,8 +363,8 @@ def setup_page(title: str, icon: str = "🩺") -> None:
             <div class="left">
                 <div class="mark"></div>
                 <div>
-                    <h1>多智能体医疗会诊</h1>
-                    <div class="sub">Multi-Agent Medical Consultation</div>
+                    <h1>多科室智能会诊系统</h1>
+                    <div class="sub">Multi-Department Intelligent Consultation</div>
                 </div>
             </div>
             <div class="meta">
@@ -379,11 +392,18 @@ def get_client() -> ApiClient:
 
 
 def get_session_id() -> Optional[str]:
-    return st.session_state.get(_S_SESSION_ID)
+    sid = st.session_state.get(_S_SESSION_ID)
+    if not sid:
+        # 刷新后从 URL query param 恢复
+        sid = st.query_params.get("sid") or None
+        if sid:
+            st.session_state[_S_SESSION_ID] = sid
+    return sid
 
 
 def set_session_id(sid: str) -> None:
     st.session_state[_S_SESSION_ID] = sid
+    st.query_params["sid"] = sid
 
 
 def clear_session() -> None:
@@ -397,6 +417,9 @@ def get_case() -> Optional[Dict[str, Any]]:
 
 def set_case(case: Dict[str, Any]) -> None:
     st.session_state[_S_CASE] = case
+    chief = case.get("chief_complaint") or ""
+    if chief:
+        st.query_params["chief"] = chief
 
 
 def get_report() -> Optional[Dict[str, Any]]:
@@ -438,8 +461,34 @@ def require_session_or_stop() -> str:
 def render_session_banner() -> None:
     """页面顶部展示当前会诊的临床状态摘要 (不暴露 session_id / case_id)."""
     case = get_case() or {}
-    chief = case.get("chief_complaint") or "尚未提交病例"
+    chief = case.get("chief_complaint") or ""
     report = get_report() or {}
+
+    # 刷新后 session_state 为空但 sid 已从 URL 恢复 → 从后端拉取 report + case
+    if not report or not chief:
+        sid = get_session_id()
+        if sid:
+            try:
+                from frontend.api_client import BackendError  # noqa: PLC0415
+                _client = get_client()
+                if not report:
+                    msgs = _client.list_messages(sid)
+                    msg = latest_report(msgs)
+                    if msg:
+                        report = msg["payload"]
+                        set_report(report)
+                if not chief:
+                    case_data = _client.get_case(sid)
+                    chief = case_data.get("chief_complaint") or ""
+                    if chief:
+                        st.session_state[_S_CASE] = case_data
+                        st.query_params["chief"] = chief
+            except Exception:  # noqa: BLE001
+                pass
+
+    if not chief:
+        # 尝试从 URL query param 恢复 (刷新场景)
+        chief = st.query_params.get("chief") or "尚未提交病例"
     safety = report.get("safety_action")
     level = report.get("aggregation_level")
 
@@ -480,3 +529,93 @@ def safety_tag(action: str) -> str:
 
 def pretty_json(payload: Any) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+
+
+# ---------------- 综合报告 / 分诊页 共享渲染 ----------------
+
+_DEPT_LABEL_CN = {"internal": "内科", "surgery": "外科", "pediatrics": "儿科", "general": "全科"}
+_TRIAGE_LABEL = {
+    "single_clear": ("单一明确", "ok"),
+    "multi_cross":  ("多科室交叉", "info"),
+    "ambiguous":    ("情况复杂", "warn"),
+}
+
+
+def extract_routing_summary(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """从消息流中提取最近一次分诊的关键摘要, 供综合报告 / 分诊页共用."""
+    msg = latest_routing(messages)
+    if msg is None:
+        return {}
+    payload = msg.get("payload") or {}
+    candidates = payload.get("candidates", []) or []
+    triage = payload.get("triage_tag", "")
+    triage_label, triage_cls = _TRIAGE_LABEL.get(triage, (triage or "—", "info"))
+    top_dept_code = candidates[0]["dept"] if candidates else ""
+    return {
+        "triage_tag": triage,
+        "triage_label": triage_label,
+        "triage_cls": triage_cls,
+        "fallback_triggered": bool(payload.get("fallback_triggered", False)),
+        "candidates": candidates,
+        "top_dept_code": top_dept_code,
+        "top_dept_label": _DEPT_LABEL_CN.get(top_dept_code, top_dept_code or "—"),
+    }
+
+
+def _clean_opinion_field(text: str) -> str:
+    """去除科室意见字段中模型多输出的下一节小标题及套话.
+
+    模型偶尔会把后续 "### 鉴别要点" "### 处置建议" 全部塞进上一段, 也会在末尾追加
+    "自评置信度: high" 或 "根据提供的信息, 我们可以得出以下结论:" 之类模板残留,
+    这里识别首个 ## 小标题或 "自评置信度" 即截断.
+    """
+    if not text:
+        return "—"
+    s = str(text)
+    cut = re.search(r"\s*(?:#{2,}\s|自评置信度\s*[:：])", s)
+    if cut:
+        s = s[: cut.start()]
+    s = re.sub(r"\s*根据提供的信息[\s\S]*$", "", s)
+    return s.strip() or "—"
+
+
+def render_department_opinions(opinions: List[Dict[str, Any]]) -> None:
+    """以 tabs 形式展示各科室原始意见, 供综合报告页内嵌使用.
+
+    调用方可选用 ``st.container(border=True)`` 包裹以形成独立卡片.
+    本函数不再重复输出「××·科室意见」标题 (tab 已有科室名).
+    """
+    if not opinions:
+        st.info("当前会话尚未产出科室意见.")
+        return
+
+    tabs = st.tabs([_DEPT_LABEL_CN.get(o.get("dept", "?"), o.get("dept", "?")) for o in opinions])
+    for tab, op in zip(tabs, opinions):
+        with tab:
+            diagnosis = _clean_opinion_field(op.get("diagnosis"))
+            differential = _clean_opinion_field(op.get("differential"))
+            treatment = _clean_opinion_field(op.get("treatment"))
+            attention = _clean_opinion_field(op.get("attention"))
+            conf = confidence_tag(op.get("self_confidence", "medium"))
+            st.markdown(
+                f'<div class="md-opinion" style="padding: 4px 2px 2px;">'
+                f'<div style="text-align:right; margin-bottom:6px;">{conf}</div>'
+                f'<div style="font-size:.7rem; letter-spacing:.14em; text-transform:uppercase;'
+                f' color: var(--md-text-faint); margin: 4px 0 2px;">诊断倾向</div>'
+                f'<div style="font-family: var(--md-serif); font-size:.95rem; line-height:1.75;'
+                f' color: var(--md-text); margin-bottom:10px;">{diagnosis}</div>'
+                f'<div style="font-size:.7rem; letter-spacing:.14em; text-transform:uppercase;'
+                f' color: var(--md-text-faint); margin: 4px 0 2px;">鉴别要点</div>'
+                f'<div style="font-family: var(--md-serif); font-size:.95rem; line-height:1.75;'
+                f' color: var(--md-text); margin-bottom:10px;">{differential}</div>'
+                f'<div style="font-size:.7rem; letter-spacing:.14em; text-transform:uppercase;'
+                f' color: var(--md-text-faint); margin: 4px 0 2px;">处置建议</div>'
+                f'<div style="font-family: var(--md-serif); font-size:.95rem; line-height:1.75;'
+                f' color: var(--md-text); margin-bottom:10px;">{treatment}</div>'
+                f'<div style="font-size:.7rem; letter-spacing:.14em; text-transform:uppercase;'
+                f' color: var(--md-text-faint); margin: 4px 0 2px;">关注事项</div>'
+                f'<div style="font-family: var(--md-serif); font-size:.95rem; line-height:1.75;'
+                f' color: var(--md-text);">{attention}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )

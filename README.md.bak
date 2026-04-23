@@ -31,3 +31,5 @@ pytest tests/test_router.py -v
 - `tests/` 4.5 节测试评估脚本
 
 开发规范与阶段进度见 [开发规范与进度.md](开发规范与进度.md)。
+
+bash scripts/run_dev.sh

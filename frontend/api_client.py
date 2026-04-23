@@ -56,6 +56,12 @@ class ApiClient:
     def list_messages(self, session_id: str) -> List[Dict[str, Any]]:
         return self._get(f"/api/v1/session/{session_id}")
 
+    def get_case(self, session_id: str) -> Dict[str, Any]:
+        return self._get(f"/api/v1/session/{session_id}/case")
+
+    def delete_session(self, session_id: str) -> None:
+        self._call("DELETE", f"/api/v1/session/{session_id}")
+
     def trace(self, session_id: str, round_: int = 1) -> List[Dict[str, Any]]:
         return self._get(f"/api/v1/session/{session_id}/trace/{round_}")
 

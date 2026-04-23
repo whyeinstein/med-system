@@ -46,3 +46,18 @@ class CaseRepo:
             medical_history=row["medical_history"] or "",
             exam_results=row["exam_results"] or "",
         )
+
+    def get_by_session(self, session_id: str) -> Optional[CaseSummary]:
+        row = self._conn.execute(
+            'SELECT * FROM "case" WHERE session_id = ? ORDER BY rowid DESC LIMIT 1',
+            (session_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return CaseSummary(
+            case_id=row["id"],
+            chief_complaint=row["chief_complaint"],
+            symptoms=row["symptoms"],
+            medical_history=row["medical_history"] or "",
+            exam_results=row["exam_results"] or "",
+        )
