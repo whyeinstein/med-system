@@ -32,7 +32,35 @@ def _enrich(sid: str) -> Dict:
         return {}
     rep_msg = latest_report(msgs)
     rep = rep_msg["payload"] if rep_msg else {}
-    summary = (rep.get("summary") or "").strip().split("\n")[0][:60]
+
+    # 优先用主诉作为摘要标题，fallback 才从 summary 提取
+    chief = ""
+    try:
+        case_data = client.get_case(sid)
+        chief = (case_data.get("chief_complaint") or "").strip()
+    except Exception:  # noqa: BLE001
+        pass
+
+    if chief:
+        summary = chief[:80]
+    else:
+        # 从 summary 里跳过调试头 (【...】行 / ### 行)，取第一条有意义的文本
+        import re as _re
+        raw = rep.get("summary") or ""
+        summary = ""
+        for ln in raw.splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            if _re.match(r"^【|^#+\s", ln):
+                continue
+            # 去掉 w=... 权重标记
+            ln = _re.sub(r"\s*\(?w=[\d.]+\)?\s*", " ", ln).strip()
+            if ln:
+                summary = ln[:80]
+                break
+        summary = summary or "(尚未产出报告)"
+
     return {
         "summary": summary,
         "level": rep.get("aggregation_level"),
@@ -79,7 +107,10 @@ for s in sessions:
         <div class="md-card" style="padding:18px 22px;">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:18px;">
             <div style="flex:1;">
-              <div style="font-family: var(--md-serif); font-size:1.1rem; color: var(--md-text);">
+              <div style="font-size:.68rem; letter-spacing:.18em; text-transform:uppercase;
+                           color: var(--md-text-faint); margin-bottom:4px;">主诉</div>
+              <div style="font-family: var(--md-serif); font-size:1.08rem; color: var(--md-text);
+                           line-height:1.55;">
                 {summary}
               </div>
               <div style="margin-top:6px; color: var(--md-text-faint); font-size:.78rem; letter-spacing:.06em;">
